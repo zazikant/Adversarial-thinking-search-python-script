@@ -1,7 +1,5 @@
 import streamlit as st
 import asyncio
-import nest_asyncio
-nest_asyncio.apply()
 
 import os
 import time
@@ -433,10 +431,10 @@ def search_node(state: dict) -> dict:
                 errors.append(str(e))
                 return {"search_results": [], "errors": errors}
 
-    return asyncio.get_event_loop().run_until_complete(_run())
+    return asyncio.run(_run())
 
 
-BROWSER_SEMAPHORE = asyncio.Semaphore(10)
+BROWSER_SEMAPHORE = None  # recreated per-call (semaphores are loop-bound)
 
 def browser_node(state: dict) -> dict:
     search_results = state.get("search_results", [])
@@ -452,8 +450,8 @@ def browser_node(state: dict) -> dict:
     ]
     top_urls = [str(r.url) for r in sorted(results_parsed, key=lambda x: x.rank)[:browser_top_n]]
 
-    async def fetch_with_guard(url: str):
-        async with BROWSER_SEMAPHORE:
+    async def fetch_with_guard(url: str, sem: asyncio.Semaphore):
+        async with sem:
             for attempt in range(3):
                 try:
                     content = await browserless_fetch(url)
@@ -480,12 +478,13 @@ def browser_node(state: dict) -> dict:
             return None
 
     async def _run():
-        fetched = await asyncio.gather(*[fetch_with_guard(u) for u in top_urls])
+        sem     = asyncio.Semaphore(10)
+        fetched = await asyncio.gather(*[fetch_with_guard(u, sem) for u in top_urls])
         pages   = [f.model_dump() for f in fetched if f is not None]
         log.info(f"[BrowserNode] Fetched {len(pages)}/{len(top_urls)} pages")
         return {"page_contents": pages, "errors": errors}
 
-    return asyncio.get_event_loop().run_until_complete(_run())
+    return asyncio.run(_run())
 
 
 def reducer_node_search(state: dict) -> dict:
