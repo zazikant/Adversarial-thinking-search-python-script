@@ -1,5 +1,4 @@
 import streamlit as st
-import asyncio
 
 import os
 import time
@@ -207,9 +206,9 @@ class ClassificationError(Exception): pass
 class LLMError(Exception): pass
 
 # ─────────────────────────────────────────────────────────────────────────────
-# SERPER CLIENT  (Cell 6 — exact)
+# SERPER CLIENT  (sync — avoids event-loop conflicts in Streamlit)
 # ─────────────────────────────────────────────────────────────────────────────
-async def serper_search(query: str, *, max_results: int = 10) -> List[SearchResult]:
+def serper_search(query: str, *, max_results: int = 10) -> List[SearchResult]:
     if not query.strip():
         raise ValueError("query must be non-empty")
 
@@ -218,8 +217,8 @@ async def serper_search(query: str, *, max_results: int = 10) -> List[SearchResu
     payload = {"q": query, "num": max_results}
 
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.post(url, json=payload, headers=headers)
+        with httpx.Client(timeout=15.0) as client:
+            resp = client.post(url, json=payload, headers=headers)
         if resp.status_code == 401: raise SerperAuthError(f"Serper auth failed: {resp.text}")
         if resp.status_code == 429: raise SerperRateLimit("Serper rate limit hit")
         resp.raise_for_status()
@@ -246,15 +245,15 @@ async def serper_search(query: str, *, max_results: int = 10) -> List[SearchResu
         raise SerperNetworkError(f"Serper network error: {e}") from e
 
 # ─────────────────────────────────────────────────────────────────────────────
-# BROWSERLESS CLIENT  (Cell 7 — exact)
+# BROWSERLESS CLIENT  (sync — avoids event-loop conflicts in Streamlit)
 # ─────────────────────────────────────────────────────────────────────────────
-async def browserless_fetch(url: str, *, timeout: int = 30) -> WebPageContent:
+def browserless_fetch(url: str, *, timeout: int = 30) -> WebPageContent:
     endpoint = f"https://chrome.browserless.io/content?token={os.environ.get('BROWSERLESS_API_KEY', '')}"
     payload  = {"url": url}
 
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(endpoint, json=payload)
+        with httpx.Client(timeout=timeout) as client:
+            resp = client.post(endpoint, json=payload)
         if resp.status_code == 401: raise BrowserlessAuthError(f"Browserless auth failed for {url}")
         if resp.status_code == 429: raise BrowserlessRateLimit(f"Browserless rate limit for {url}")
         resp.raise_for_status()
@@ -405,36 +404,35 @@ def search_node(state: dict) -> dict:
     query  = state["user_query"]
     errors = list(state.get("errors", []))
 
-    async def _run():
-        for attempt in range(4):
-            try:
-                results = await serper_search(query, max_results=max_search_results)
-                log.info(f"[SearchNode] Got {len(results)} results")
-                return {"search_results": [r.model_dump() for r in results]}
-            except SerperAuthError as e:
-                log.error(f"[SearchNode] Auth error: {e}")
+    for attempt in range(4):
+        try:
+            results = serper_search(query, max_results=max_search_results)
+            log.info(f"[SearchNode] Got {len(results)} results")
+            return {"search_results": [r.model_dump() for r in results]}
+        except SerperAuthError as e:
+            log.error(f"[SearchNode] Auth error: {e}")
+            errors.append(str(e))
+            return {"search_results": [], "errors": errors}
+        except SerperRateLimit as e:
+            wait = 2 ** attempt
+            log.warning(f"[SearchNode] Rate limit, waiting {wait}s (attempt {attempt+1})")
+            time.sleep(wait)
+            if attempt == 3:
                 errors.append(str(e))
                 return {"search_results": [], "errors": errors}
-            except SerperRateLimit as e:
-                wait = 2 ** attempt
-                log.warning(f"[SearchNode] Rate limit, waiting {wait}s (attempt {attempt+1})")
-                await asyncio.sleep(wait)
-                if attempt == 3:
-                    errors.append(str(e))
-                    return {"search_results": [], "errors": errors}
-            except SerperTimeout as e:
-                log.warning(f"[SearchNode] Timeout: {e} — returning empty results")
-                errors.append(str(e))
-                return {"search_results": [], "errors": errors}
-            except SerperNetworkError as e:
-                log.error(f"[SearchNode] Network error: {e}")
-                errors.append(str(e))
-                return {"search_results": [], "errors": errors}
+        except SerperTimeout as e:
+            log.warning(f"[SearchNode] Timeout: {e} — returning empty results")
+            errors.append(str(e))
+            return {"search_results": [], "errors": errors}
+        except SerperNetworkError as e:
+            log.error(f"[SearchNode] Network error: {e}")
+            errors.append(str(e))
+            return {"search_results": [], "errors": errors}
 
-    return asyncio.run(_run())
+    return {"search_results": [], "errors": errors}
 
 
-BROWSER_SEMAPHORE = None  # recreated per-call (semaphores are loop-bound)
+BROWSER_SEMAPHORE = None  # no longer needed — sync fetches are sequential
 
 def browser_node(state: dict) -> dict:
     search_results = state.get("search_results", [])
@@ -450,41 +448,35 @@ def browser_node(state: dict) -> dict:
     ]
     top_urls = [str(r.url) for r in sorted(results_parsed, key=lambda x: x.rank)[:browser_top_n]]
 
-    async def fetch_with_guard(url: str, sem: asyncio.Semaphore):
-        async with sem:
-            for attempt in range(3):
-                try:
-                    content = await browserless_fetch(url)
-                    return content
-                except BrowserlessAuthError as e:
-                    log.error(f"[BrowserNode] Auth error for {url}: {e}")
-                    errors.append(str(e))
-                    return None
-                except BrowserlessRateLimit:
-                    wait = 2 ** attempt
-                    await asyncio.sleep(wait)
-                except BrowserlessTimeout as e:
-                    log.warning(f"[BrowserNode] Timeout dropping {url}: {e}")
-                    errors.append(str(e))
-                    return None
-                except MemoryError:
-                    log.error(f"[BrowserNode] OOM fetching {url}")
-                    errors.append(f"OOM for {url}")
-                    return None
-                except BrowserlessNetworkError as e:
-                    log.error(f"[BrowserNode] Network error {url}: {e}")
-                    errors.append(str(e))
-                    return None
-            return None
+    pages = []
+    for url in top_urls:
+        for attempt in range(3):
+            try:
+                content = browserless_fetch(url)
+                pages.append(content.model_dump())
+                break
+            except BrowserlessAuthError as e:
+                log.error(f"[BrowserNode] Auth error for {url}: {e}")
+                errors.append(str(e))
+                break
+            except BrowserlessRateLimit:
+                wait = 2 ** attempt
+                time.sleep(wait)
+            except BrowserlessTimeout as e:
+                log.warning(f"[BrowserNode] Timeout dropping {url}: {e}")
+                errors.append(str(e))
+                break
+            except MemoryError:
+                log.error(f"[BrowserNode] OOM fetching {url}")
+                errors.append(f"OOM for {url}")
+                break
+            except BrowserlessNetworkError as e:
+                log.error(f"[BrowserNode] Network error {url}: {e}")
+                errors.append(str(e))
+                break
 
-    async def _run():
-        sem     = asyncio.Semaphore(10)
-        fetched = await asyncio.gather(*[fetch_with_guard(u, sem) for u in top_urls])
-        pages   = [f.model_dump() for f in fetched if f is not None]
-        log.info(f"[BrowserNode] Fetched {len(pages)}/{len(top_urls)} pages")
-        return {"page_contents": pages, "errors": errors}
-
-    return asyncio.run(_run())
+    log.info(f"[BrowserNode] Fetched {len(pages)}/{len(top_urls)} pages")
+    return {"page_contents": pages, "errors": errors}
 
 
 def reducer_node_search(state: dict) -> dict:
