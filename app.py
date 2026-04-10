@@ -317,7 +317,7 @@ Snippets:
 
 Provide a clear, direct answer."""
     
-    return llm(prompt, max_tokens=1000)
+    return llm(prompt, max_tokens=1500)
 
 def strategy_deep(page_contents: List[WebPageContent], query: str) -> str:
     """Deep strategy using full page content."""
@@ -341,7 +341,7 @@ Content:
 
 Provide a detailed, well-structured answer."""
     
-    return llm(prompt, max_tokens=2000)
+    return llm(prompt, max_tokens=4000)
 
 def strategy_hybrid(search_results: List[SearchResult], page_contents: List[WebPageContent], query: str) -> str:
     """Hybrid strategy combining snippets and pages."""
@@ -367,7 +367,7 @@ DETAILED CONTENT:
 
 Provide a balanced, informative answer."""
     
-    return llm(prompt, max_tokens=1500)
+    return llm(prompt, max_tokens=3000)
 
 def adversarial_judge(quick: str, deep: str, hybrid: str, query: str) -> str:
     """Synthesize best answer with critique."""
@@ -451,17 +451,17 @@ if st.button("🚀 Run Query", type="primary", use_container_width=True):
                 with col1:
                     st.markdown("### Quick (Snippets)")
                     quick_answer = strategy_quick(search_results)
-                    st.text_area("", quick_answer, height=200, key="quick")
+                    st.text_area("", quick_answer, height=300, key="quick")
                 
                 with col2:
                     st.markdown("### Deep (Full Pages)")
                     deep_answer = strategy_deep(page_contents, user_query)
-                    st.text_area("", deep_answer, height=200, key="deep")
+                    st.text_area("", deep_answer, height=300, key="deep")
                 
                 with col3:
                     st.markdown("### Hybrid (Combined)")
                     hybrid_answer = strategy_hybrid(search_results, page_contents, user_query)
-                    st.text_area("", hybrid_answer, height=200, key="hybrid")
+                    st.text_area("", hybrid_answer, height=300, key="hybrid")
                 
                 # Step 5: Adversarial Judge
                 st.info("⚖️ Synthesizing final answer...")
@@ -469,7 +469,7 @@ if st.button("🚀 Run Query", type="primary", use_container_width=True):
                 
                 st.divider()
                 st.markdown("### 🎯 FINAL SYNTHESIZED ANSWER")
-                st.text_area("", final_answer, height=400, key="final")
+                st.text_area("", final_answer, height=500, key="final")
                 
                 # Copy button
                 copy_button(final_answer, "📋 Copy Final Answer")
