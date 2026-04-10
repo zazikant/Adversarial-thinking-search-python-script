@@ -198,6 +198,7 @@ browserless_key = st.session_state.get("saved_browserless_key", "")
 # ====================== UTILITY FUNCTIONS ======================
 def llm(prompt: str, max_tokens: int = 2048, temperature: float = 0.7) -> str:
     """Call NVIDIA LLM API."""
+    nvidia_key = st.session_state.get("saved_nvidia_key", "")
     if not nvidia_key:
         return "ERROR: No NVIDIA API key configured"
     
@@ -207,7 +208,7 @@ def llm(prompt: str, max_tokens: int = 2048, temperature: float = 0.7) -> str:
         "Content-Type": "application/json"
     }
     payload = {
-        "model": "openai/gpt-oss-120b",  # Use full path
+        "model": "openai/gpt-oss-120b",
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": max_tokens,
         "temperature": temperature
@@ -216,20 +217,18 @@ def llm(prompt: str, max_tokens: int = 2048, temperature: float = 0.7) -> str:
     try:
         response = httpx.post(url, json=payload, headers=headers, timeout=60.0)
         if response.status_code == 404:
-            return f"ERROR: Model not found. Available models: openai/gpt-oss-120b, deepseek-ai/deepseek-v3.1, etc."
-        response.raise_for_status()
+            return f"ERROR: Model not found"
+        if response.status_code != 200:
+            return f"ERROR: Status {response.status_code}"
         data = response.json()
-        
-        # Handle reasoning models that may return content in reasoning field
         msg = data["choices"][0]["message"]
-        content = msg.get("content") or msg.get("reasoning") or ""
-        return content
+        return msg.get("content") or msg.get("reasoning") or ""
     except Exception as e:
-        log.error(f"[llm] Error: {e}")
         return f"ERROR: {str(e)}"
 
-async def serper_search_async(query: str, max_results: int = 10) -> List[SearchResult]:
-    """Async Serper search."""
+def serper_search(query: str, max_results: int = 10) -> List[SearchResult]:
+    """Serper search (sync wrapper)."""
+    serper_key = st.session_state.get("saved_serper_key", "")
     if not serper_key:
         return []
     
@@ -238,12 +237,9 @@ async def serper_search_async(query: str, max_results: int = 10) -> List[SearchR
     payload = {"q": query, "num": max_results, "gl": "us", "hl": "en", "autocorrect": True}
     
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(url, json=payload, headers=headers)
-        
+        resp = httpx.post(url, json=payload, headers=headers, timeout=30.0)
         if resp.status_code != 200:
             return []
-        
         data = resp.json()
         results = []
         for i, item in enumerate(data.get("organic", [])[:max_results], start=1):
@@ -255,12 +251,36 @@ async def serper_search_async(query: str, max_results: int = 10) -> List[SearchR
             ))
         return results
     except Exception as e:
-        log.error(f"[serper_search] Error: {e}")
         return []
 
-async def browserless_fetch_async(url: str, timeout: int = 60) -> Optional[WebPageContent]:
-    """Async Browserless fetch."""
+def browserless_fetch(url: str) -> Optional[WebPageContent]:
+    """Browserless fetch (sync)."""
+    browserless_key = st.session_state.get("saved_browserless_key", "")
     if not browserless_key:
+        return None
+    
+    endpoint = f"https://chrome.browserless.io/content?token={browserless_key}"
+    payload = {"url": url}
+    
+    try:
+        resp = httpx.post(endpoint, json=payload, timeout=60.0)
+        if resp.status_code not in [200, 429]:
+            return None
+        if resp.status_code == 429:
+            return None
+        
+        html = resp.text
+        if len(html.encode()) > 5 * 1024 * 1024:
+            html = html[:5 * 1024 * 1024]
+        
+        import re
+        html_clean = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL | re.IGNORECASE)
+        html_clean = re.sub(r'<style[^>]*>.*?</style>', '', html_clean, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r'<[^>]+>', ' ', html_clean)
+        text = re.sub(r'\s+', ' ', text).strip()
+        
+        return WebPageContent(url=url, html=html, text=text, fetched_at=time.time())
+    except:
         return None
     
     endpoint = f"https://chrome.browserless.io/content?token={browserless_key}"
@@ -292,35 +312,7 @@ async def browserless_fetch_async(url: str, timeout: int = 60) -> Optional[WebPa
         log.error(f"[browserless_fetch] Error for {url}: {e}")
         return None
 
-async def search_node_async(query: str, max_results: int = 10) -> List[SearchResult]:
-    """Simplify query for better results."""
-    simplified_query = query
-    if len(query) > 100:
-        keywords = query.replace("?", "").replace(".", "").replace(",", " ").split()
-        important = [w for w in keywords if any(k in w.lower() for k in ['dspy', 'mipro', 'gepa', 'optimizer', 'rag', 'instruction', 'drift', 'gpt', 'llama', 'bayesian', 'genetic', 'pareto', 'supabase', 'nextjs', 'search', 'database'])]
-        if len(important) >= 3:
-            simplified_query = " ".join(important[:10])
-    
-    return await serper_search_async(simplified_query, max_results)
-
-async def browser_node_async(urls: List[str], max_pages: int = 5) -> List[WebPageContent]:
-    """Fetch multiple URLs in parallel."""
-    semaphore = asyncio.Semaphore(5)
-    
-    async def fetch_with_limit(url: str):
-        async with semaphore:
-            for attempt in range(3):
-                result = await browserless_fetch_async(url)
-                if result:
-                    return result
-                if attempt < 2:
-                    await asyncio.sleep(2 ** attempt)
-            return None
-    
-    tasks = [fetch_with_limit(url) for url in urls[:max_pages]]
-    results = await asyncio.gather(*tasks)
-    return [r for r in results if r is not None]
-
+# ====================== CLASSIFY INTENT ======================
 def classify_intent(query: str) -> str:
     """Classify query intent."""
     prompt = f"""Classify this query as 'search' or 'browse'. 
@@ -449,8 +441,8 @@ user_query = st.text_area(
 if st.button("🚀 Run Query", type="primary", use_container_width=True):
     if not user_query.strip():
         st.error("Please enter a query")
-    elif not nvidia_key or not serper_key or not browserless_key:
-        st.error("Please configure all API keys in the sidebar")
+    elif not st.session_state.get("saved_nvidia_key") or not st.session_state.get("saved_serper_key") or not st.session_state.get("saved_browserless_key"):
+        st.error("Please configure all API keys in the sidebar and click Apply")
     else:
         with st.spinner("Running RAG pipeline..."):
             try:
@@ -459,17 +451,24 @@ if st.button("🚀 Run Query", type="primary", use_container_width=True):
                 intent = classify_intent(user_query)
                 st.success(f"Intent: {intent}")
                 
-                # Step 2: Search
+                # Step 2: Search (sync)
                 st.info("🔍 Searching...")
-                search_results = asyncio.run(search_node_async(user_query, max_results))
+                search_results = serper_search(user_query, max_results)
                 st.success(f"Found {len(search_results)} results")
                 
-                # Step 3: Browse (if needed)
+                # Step 3: Browse (sync, sequential)
                 page_contents = []
                 if intent == "search" or intent == "unknown":
                     st.info("🌐 Fetching pages...")
                     urls = [r.url for r in search_results[:max_pages]]
-                    page_contents = asyncio.run(browser_node_async(urls, max_pages))
+                    fetched = 0
+                    for u in urls:
+                        if fetched >= max_pages:
+                            break
+                        pc = browserless_fetch(u)
+                        if pc:
+                            page_contents.append(pc)
+                            fetched += 1
                     st.success(f"Fetched {len(page_contents)} pages")
                 
                 # Step 4: Run strategies
