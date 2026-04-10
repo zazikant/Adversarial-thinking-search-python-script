@@ -283,34 +283,7 @@ def browserless_fetch(url: str) -> Optional[WebPageContent]:
     except:
         return None
     
-    endpoint = f"https://chrome.browserless.io/content?token={browserless_key}"
-    payload = {"url": url}
-    
-    try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(endpoint, json=payload)
-        
-        if resp.status_code == 401:
-            return None
-        if resp.status_code == 429:
-            return None
-        if resp.status_code != 200:
-            return None
-        
-        html = resp.text
-        if len(html.encode()) > 5 * 1024 * 1024:
-            html = html[:5 * 1024 * 1024]
-        
-        import re
-        html_clean = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL | re.IGNORECASE)
-        html_clean = re.sub(r'<style[^>]*>.*?</style>', '', html_clean, flags=re.DOTALL | re.IGNORECASE)
-        text = re.sub(r'<[^>]+>', ' ', html_clean)
-        text = re.sub(r'\s+', ' ', text).strip()
-        
-        return WebPageContent(url=url, html=html, text=text, fetched_at=time.time())
-    except Exception as e:
-        log.error(f"[browserless_fetch] Error for {url}: {e}")
-        return None
+    return None
 
 # ====================== CLASSIFY INTENT ======================
 def classify_intent(query: str) -> str:
