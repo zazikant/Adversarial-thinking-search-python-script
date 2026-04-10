@@ -160,6 +160,7 @@ with st.sidebar:
     # Model Selection
     st.markdown("### 🤖 LLM Model")
     model_options = {
+        "openai/gpt-oss-120b (Recommended)": "openai/gpt-oss-120b",
         "deepseek-ai/deepseek-v3.1": "deepseek-ai/deepseek-v3.1",
         "google/gemma-2-9b-it": "google/gemma-2-9b-it",
         "meta/llama-3.1-70b-instruct": "meta/llama-3.1-70b-instruct",
