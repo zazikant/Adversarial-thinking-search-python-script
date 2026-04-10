@@ -110,47 +110,62 @@ with st.sidebar:
     
     st.markdown("### 🔑 API Keys")
     
+    # Initialize session state
+    if "keys_saved" not in st.session_state:
+        st.session_state["keys_saved"] = False
+    
     # NVIDIA Key
     nvidia_key = st.text_input(
         "NVIDIA API Key",
         type="password",
-        value=st.session_state.get("nvidia_key", ""),
+        value=st.session_state.get("saved_nvidia_key", ""),
         help="NVIDIA NIM API key for LLM calls"
     )
-    if nvidia_key != st.session_state.get("nvidia_key", ""):
-        st.session_state["nvidia_key"] = nvidia_key
-        st.rerun()
     
     # Serper Key
     serper_key = st.text_input(
-        "Serper API Key",
+        "Serper API Key", 
         type="password",
-        value=st.session_state.get("serper_key", ""),
+        value=st.session_state.get("saved_serper_key", ""),
         help="Serper.dev API key for Google search"
     )
-    if serper_key != st.session_state.get("serper_key", ""):
-        st.session_state["serper_key"] = serper_key
-        st.rerun()
     
     # Browserless Key
     browserless_key = st.text_input(
         "Browserless API Key",
         type="password",
-        value=st.session_state.get("browserless_key", ""),
+        value=st.session_state.get("saved_browserless_key", ""),
         help="Browserless.io API key for headless Chrome"
     )
-    if browserless_key != st.session_state.get("browserless_key", ""):
-        st.session_state["browserless_key"] = browserless_key
+    
+    # Apply Button
+    if st.button("✅ Apply API Keys", type="primary", use_container_width=True):
+        st.session_state["saved_nvidia_key"] = nvidia_key
+        st.session_state["saved_serper_key"] = serper_key
+        st.session_state["saved_browserless_key"] = browserless_key
+        st.session_state["keys_saved"] = True
+        st.success("✅ Keys applied!")
         st.rerun()
+    
+    st.divider()
+    
+    # Show status
+    if st.session_state.get("keys_saved"):
+        st.success("🔑 Keys configured")
+    else:
+        st.warning("⚠️ Keys not applied")
     
     st.divider()
     
     # Model Selection
     st.markdown("### 🤖 LLM Model")
     model_options = {
-        "NVIDIA gpt-oss-120b": "nvidia_nim/openai/gpt-oss-120b",
-        "NVIDIA Kimi K2.5": "nvidia_nim/moonshotai/kimi-k2.5",
-        "NVIDIA MiniMax M2.5": "nvidia_nim/minimaxai/minimax-m2.5",
+        "deepseek-ai/deepseek-v3.1": "deepseek-ai/deepseek-v3.1",
+        "google/gemma-2-9b-it": "google/gemma-2-9b-it",
+        "meta/llama-3.1-70b-instruct": "meta/llama-3.1-70b-instruct",
+        "mistralai/mistral-small-24b-instruct": "mistralai/mistral-small-24b-instruct",
+        "Qwen/Qwen2.5-7b-instruct": "qwen/qwen2.5-7b-instruct",
+        "Custom Model": "custom"
     }
     selected_model = st.selectbox(
         "Select Model",
@@ -158,7 +173,11 @@ with st.sidebar:
         index=0,
         help="Select the LLM model to use"
     )
-    model_name = model_options[selected_model]
+    
+    if selected_model == "Custom Model":
+        model_name = st.text_input("Enter Custom Model Name", value="deepseek-ai/deepseek-v3.1")
+    else:
+        model_name = model_options[selected_model]
     
     st.divider()
     
@@ -169,6 +188,11 @@ with st.sidebar:
     
     st.divider()
     st.caption("💡 All keys are stored in session only. Not saved to disk.")
+
+# ====================== GET SAVED KEYS ======================
+nvidia_key = st.session_state.get("saved_nvidia_key", "")
+serper_key = st.session_state.get("saved_serper_key", "")
+browserless_key = st.session_state.get("saved_browserless_key", "")
 
 # ====================== UTILITY FUNCTIONS ======================
 def llm(prompt: str, max_tokens: int = 2048, temperature: float = 0.7) -> str:
@@ -182,7 +206,7 @@ def llm(prompt: str, max_tokens: int = 2048, temperature: float = 0.7) -> str:
         "Content-Type": "application/json"
     }
     payload = {
-        "model": model_name,
+        "model": "openai/gpt-oss-120b",  # Use full path
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": max_tokens,
         "temperature": temperature
@@ -190,9 +214,15 @@ def llm(prompt: str, max_tokens: int = 2048, temperature: float = 0.7) -> str:
     
     try:
         response = httpx.post(url, json=payload, headers=headers, timeout=60.0)
+        if response.status_code == 404:
+            return f"ERROR: Model not found. Available models: openai/gpt-oss-120b, deepseek-ai/deepseek-v3.1, etc."
         response.raise_for_status()
         data = response.json()
-        return data["choices"][0]["message"]["content"]
+        
+        # Handle reasoning models that may return content in reasoning field
+        msg = data["choices"][0]["message"]
+        content = msg.get("content") or msg.get("reasoning") or ""
+        return content
     except Exception as e:
         log.error(f"[llm] Error: {e}")
         return f"ERROR: {str(e)}"
