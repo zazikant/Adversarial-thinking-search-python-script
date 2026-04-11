@@ -567,7 +567,10 @@ def aggregator_node(state: dict) -> dict:
                 texts.append(snippet)
 
         aggregated = "\n\n".join(texts)
-        aggregated = aggregated[:20000]     # hard cap per spec invariant
+        aggregated = aggregated[:20000]
+        last_period = aggregated.rfind('.')
+        if last_period > 15000:
+            aggregated = aggregated[:last_period + 1]
 
         log.info(f"[AggregatorNode] aggregated_text length={len(aggregated)}")
         return {"aggregated_text": aggregated}
@@ -632,7 +635,7 @@ Snippets:
 
 Answer in 2-3 sentences."""
 
-        answer = call_nvidia_llm(prompt, max_tokens=500)
+        answer = call_nvidia_llm(prompt, max_tokens=1500)
         log.info(f"[Strategy:Quick] Generated answer ({len(answer)} chars)")
 
         return {"strategy_outputs": {"quick": answer}}
@@ -657,6 +660,9 @@ def strategy_deep_node(state: dict) -> dict:
             full_text.append(text[:5000])  # 5k chars per page
 
         context = "\n\n---PAGE BREAK---\n\n".join(full_text)[:15000]
+        last_period = context.rfind('.')
+        if last_period > 10000:
+            context = context[:last_period + 1]
         prompt = f"""You have access to full web pages. Provide a comprehensive answer.
 
 Query: {state['user_query']}
@@ -666,7 +672,7 @@ Full Page Content:
 
 Provide a detailed answer (4-6 sentences) with specific facts."""
 
-        answer = call_nvidia_llm(prompt, max_tokens=1500)
+        answer = call_nvidia_llm(prompt, max_tokens=3000)
         log.info(f"[Strategy:Deep] Generated answer ({len(answer)} chars)")
 
         return {"strategy_outputs": {"deep": answer}}
@@ -690,7 +696,7 @@ def strategy_hybrid_node(state: dict) -> dict:
         page_samples = []
         for p in state.get("page_contents", [])[:5]:
             text = p.get("text", "") if isinstance(p, dict) else p.text
-            page_samples.append(text[:2000])
+            page_samples.append(text[:3000])
 
         context = f"""SNIPPETS:
 {chr(10).join(f"{i+1}. {s}" for i, s in enumerate(snippets))}
@@ -706,7 +712,7 @@ Query: {state['user_query']}
 
 Answer in 3-4 sentences, balancing breadth and depth."""
 
-        answer = call_nvidia_llm(prompt, max_tokens=800)
+        answer = call_nvidia_llm(prompt, max_tokens=2500)
         log.info(f"[Strategy:Hybrid] Generated answer ({len(answer)} chars)")
 
         return {"strategy_outputs": {"hybrid": answer}}
@@ -751,7 +757,7 @@ Hybrid: [your critique here]
 FINAL ANSWER:
 [synthesized answer here]"""
 
-        response = call_nvidia_llm(prompt, max_tokens=1500)
+        response = call_nvidia_llm(prompt, max_tokens=3000)
 
         log.info(f"[AdversarialJudge] Full response:\n{response}")
 
