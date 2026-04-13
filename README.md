@@ -1,4 +1,4 @@
-Add keys in code for ai.py
+Add keys in code for ai agent.py
 
 NVIDIA_API_KEY      = ""
 SERPER_API_KEY      = ""
