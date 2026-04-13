@@ -27,9 +27,9 @@ print("OK - Imports")
 # Cell 3: API Keys — entered securely via getpass (never stored in notebook)
 import argparse
 
-NVIDIA_API_KEY      = "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"
-SERPER_API_KEY      = "345809173a5a2796166b76dece89b7403cb7f352"
-BROWSERLESS_API_KEY = "2UJ8rtq8E35Xelkef5a1ba1ae9037bb30d36a243367450823"
+NVIDIA_API_KEY      = ""
+SERPER_API_KEY      = ""
+BROWSERLESS_API_KEY = ""
 
 os.environ["NVIDIA_API_KEY"] = NVIDIA_API_KEY
 
